@@ -50,6 +50,16 @@ def order_status_keyboard(order_id: int, current_status: OrderStatus | str | Non
     return builder.as_markup()
 
 
+def manager_inline_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Создать мероприятие", callback_data="manager_action:create")
+    builder.button(text="Список мероприятий", callback_data="manager_action:list")
+    builder.button(text="Редактировать мероприятие", callback_data="manager_action:edit")
+    builder.button(text="Удалить мероприятие", callback_data="manager_action:delete")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def event_admin_events_keyboard(events: Iterable[Event], action: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for event in events:

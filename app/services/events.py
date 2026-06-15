@@ -1,19 +1,21 @@
-from datetime import date, time
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import Event
-from app.models.order import Order
 
 
 def normalize_city(city: str) -> str:
     return " ".join(city.strip().split())
 
 
-async def list_events(session: AsyncSession) -> list[Event]:
+async def list_events(session: AsyncSession, *, include_deleted: bool = False) -> list[Event]:
+    filters = [] if include_deleted else [Event.is_active.is_(True)]
     result = await session.execute(
-        select(Event).order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
+        select(Event)
+        .where(*filters)
+        .order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
     )
     return list(result.scalars().all())
 
@@ -21,7 +23,11 @@ async def list_events(session: AsyncSession) -> list[Event]:
 async def list_event_cities(session: AsyncSession) -> list[str]:
     result = await session.execute(
         select(Event.city)
-        .where(Event.city.is_not(None), func.length(func.trim(Event.city)) > 0)
+        .where(
+            Event.is_active.is_(True),
+            Event.city.is_not(None),
+            func.length(func.trim(Event.city)) > 0,
+        )
         .distinct()
         .order_by(Event.city.asc())
     )
@@ -32,7 +38,7 @@ async def list_events_by_city(session: AsyncSession, city: str) -> list[Event]:
     normalized_city = normalize_city(city)
     result = await session.execute(
         select(Event)
-        .where(Event.city == normalized_city)
+        .where(Event.is_active.is_(True), Event.city == normalized_city)
         .order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
     )
     return list(result.scalars().all())
@@ -90,12 +96,10 @@ async def delete_event(session: AsyncSession, event_id: int) -> tuple[bool, str]
     if event is None:
         return False, "Мероприятие не найдено."
 
-    orders_count = await session.scalar(
-        select(func.count(Order.id)).where(Order.event_id == event_id)
-    )
-    if orders_count and orders_count > 0:
-        return False, "Нельзя удалить мероприятие, у которого уже есть заказы."
+    if not event.is_active:
+        return True, "Мероприятие уже удалено."
 
-    await session.delete(event)
+    event.is_active = False
+    event.deleted_at = datetime.now(timezone.utc)
     await session.flush()
     return True, "Мероприятие удалено."

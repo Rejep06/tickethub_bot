@@ -118,7 +118,7 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
 
     event_id = int(callback.data.split(":", maxsplit=1)[1])
     event = await get_event(session, event_id)
-    if event is None:
+    if event is None or not event.is_active:
         await callback.answer("Мероприятие не найдено.", show_alert=True)
         return
 
@@ -151,9 +151,13 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
 
 
 @router.message(PurchaseStates.quantity)
-async def buy_ticket_quantity(message: Message, state: FSMContext) -> None:
-    if message.text is None:
-        await message.answer("Введите количество билетов числом.")
+async def buy_ticket_quantity(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
+    if message.from_user is None or message.text is None:
         return
 
     try:
@@ -166,29 +170,9 @@ async def buy_ticket_quantity(message: Message, state: FSMContext) -> None:
         await message.answer("Количество должно быть больше нуля.")
         return
 
-    await state.update_data(quantity=quantity)
-    await state.set_state(PurchaseStates.customer_location)
-    await message.answer("Укажите ваш город или место.")
-
-
-@router.message(PurchaseStates.customer_location)
-async def buy_ticket_location(
-    message: Message,
-    session: AsyncSession,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    if message.from_user is None or message.text is None:
-        return
-
-    customer_location = message.text.strip()
-    if len(customer_location) < 2:
-        await message.answer("Укажите город или место подробнее.")
-        return
-
     data = await state.get_data()
     event_id = int(data["event_id"])
-    quantity = int(data["quantity"])
+    selected_city = data.get("city")
 
     user = await get_user_by_telegram_id(session, message.from_user.id)
     if user is None or not user.phone_number:
@@ -197,9 +181,14 @@ async def buy_ticket_location(
         return
 
     event = await get_event(session, event_id)
-    if event is None:
+    if event is None or not event.is_active:
         await state.clear()
         await message.answer("Мероприятие больше недоступно.", reply_markup=main_menu_keyboard())
+        return
+
+    if isinstance(selected_city, str) and selected_city and event.city != selected_city:
+        await state.clear()
+        await message.answer("Мероприятие больше не относится к выбранному городу. Начните заказ заново.", reply_markup=main_menu_keyboard())
         return
 
     order = await create_order(
@@ -207,7 +196,9 @@ async def buy_ticket_location(
         user_id=user.id,
         event_id=event.id,
         quantity=quantity,
-        customer_location=customer_location,
+        # Поле оставлено для обратной совместимости со старой схемой orders.
+        # Дополнительный вопрос клиенту больше не задается: город уже выбран в начале сценария.
+        customer_location=event.city,
     )
 
     try:

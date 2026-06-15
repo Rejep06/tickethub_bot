@@ -25,6 +25,8 @@ class EventUpdate(BaseModel):
 
 class EventRead(EventBase):
     id: int
+    is_active: bool = True
     created_at: datetime | None = None
+    deleted_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

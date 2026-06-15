@@ -3,13 +3,14 @@ from datetime import datetime
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, ForceReply, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboards.inline import (
     delete_confirm_keyboard,
     event_admin_events_keyboard,
     event_fields_keyboard,
+    manager_inline_menu_keyboard,
 )
 from app.keyboards.reply import (
     CREATE_EVENT,
@@ -65,13 +66,104 @@ def _parse_time(raw_value: str):
     return datetime.strptime(raw_value.strip(), TIME_FORMAT).time()
 
 
+def _is_group_chat(message: Message) -> bool:
+    return message.chat.type in {"group", "supergroup"}
+
+
+def _manager_text_reply_markup(message: Message) -> ForceReply | None:
+    if not _is_group_chat(message):
+        return None
+
+    return ForceReply(selective=True, input_field_placeholder="Ответьте на это сообщение")
+
+
+def _manager_menu_reply_markup(message: Message):
+    if _is_group_chat(message):
+        return manager_inline_menu_keyboard()
+    return manager_menu_keyboard()
+
+
+async def _answer_manager_prompt(message: Message, text: str) -> None:
+    await message.answer(text, reply_markup=_manager_text_reply_markup(message))
+
+
+def _manager_group_menu_text() -> str:
+    return (
+        "Меню менеджера.\n\n"
+        "В группе Telegram бот получает обычный текст только если сообщение написано ответом "
+        "на сообщение бота. Используйте кнопки ниже или ответьте на это сообщение одним из вариантов:\n"
+        f"— {CREATE_EVENT}\n"
+        f"— {LIST_EVENTS}\n"
+        f"— {EDIT_EVENT}\n"
+        f"— {DELETE_EVENT}"
+    )
+
+
 @router.message(Command("manager"))
 async def manager_menu(message: Message, session: AsyncSession, state: FSMContext) -> None:
     if not await _require_manager_message(message, session):
         return
 
     await state.clear()
+    if _is_group_chat(message):
+        await message.answer(_manager_group_menu_text(), reply_markup=manager_inline_menu_keyboard())
+        return
+
     await message.answer("Меню менеджера.", reply_markup=manager_menu_keyboard())
+
+
+@router.callback_query(F.data.startswith("manager_action:"))
+async def manager_menu_action(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if not await _require_manager_callback(callback, session):
+        return
+
+    if callback.data is None or not isinstance(callback.message, Message):
+        return
+
+    action = callback.data.split(":", maxsplit=1)[1]
+
+    if action == "create":
+        await state.set_state(EventCreateStates.title)
+        await _answer_manager_prompt(callback.message, "Введите название мероприятия.")
+        await callback.answer()
+        return
+
+    if action == "list":
+        await state.clear()
+        events = await list_events(session)
+        await callback.message.answer(format_events_list(events))
+        await callback.answer()
+        return
+
+    if action == "edit":
+        await state.clear()
+        events = await list_events(session)
+        if not events:
+            await callback.message.answer("Мероприятий пока нет.")
+            await callback.answer()
+            return
+        await callback.message.answer(
+            "Выберите мероприятие для редактирования:",
+            reply_markup=event_admin_events_keyboard(events, "edit"),
+        )
+        await callback.answer()
+        return
+
+    if action == "delete":
+        await state.clear()
+        events = await list_events(session)
+        if not events:
+            await callback.message.answer("Мероприятий пока нет.")
+            await callback.answer()
+            return
+        await callback.message.answer(
+            "Выберите мероприятие для удаления:",
+            reply_markup=event_admin_events_keyboard(events, "delete"),
+        )
+        await callback.answer()
+        return
+
+    await callback.answer("Неизвестное действие.", show_alert=True)
 
 
 @router.message(F.text == CREATE_EVENT)
@@ -80,69 +172,69 @@ async def create_event_start(message: Message, session: AsyncSession, state: FSM
         return
 
     await state.set_state(EventCreateStates.title)
-    await message.answer("Введите название мероприятия.")
+    await _answer_manager_prompt(message, "Введите название мероприятия.")
 
 
 @router.message(EventCreateStates.title)
 async def create_event_title(message: Message, state: FSMContext) -> None:
     if not message.text or len(message.text.strip()) < 2:
-        await message.answer("Введите название мероприятия.")
+        await _answer_manager_prompt(message, "Введите название мероприятия.")
         return
 
     await state.update_data(title=message.text.strip())
     await state.set_state(EventCreateStates.city)
-    await message.answer("Введите город проведения.")
+    await _answer_manager_prompt(message, "Введите город проведения.")
 
 
 @router.message(EventCreateStates.city)
 async def create_event_city(message: Message, state: FSMContext) -> None:
     if not message.text or len(message.text.strip()) < 2:
-        await message.answer("Введите город проведения.")
+        await _answer_manager_prompt(message, "Введите город проведения.")
         return
 
     await state.update_data(city=message.text.strip())
     await state.set_state(EventCreateStates.event_date)
-    await message.answer("Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
+    await _answer_manager_prompt(message, "Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
 
 
 @router.message(EventCreateStates.event_date)
 async def create_event_date(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Введите дату в формате YYYY-MM-DD.")
+        await _answer_manager_prompt(message, "Введите дату в формате YYYY-MM-DD.")
         return
 
     try:
         event_date = _parse_date(message.text)
     except ValueError:
-        await message.answer("Неверный формат даты. Пример: 2026-06-15")
+        await _answer_manager_prompt(message, "Неверный формат даты. Пример: 2026-06-15")
         return
 
     await state.update_data(event_date=event_date)
     await state.set_state(EventCreateStates.event_time)
-    await message.answer("Введите время мероприятия в формате HH:MM. Например: 19:30")
+    await _answer_manager_prompt(message, "Введите время мероприятия в формате HH:MM. Например: 19:30")
 
 
 @router.message(EventCreateStates.event_time)
 async def create_event_time(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Введите время в формате HH:MM.")
+        await _answer_manager_prompt(message, "Введите время в формате HH:MM.")
         return
 
     try:
         event_time = _parse_time(message.text)
     except ValueError:
-        await message.answer("Неверный формат времени. Пример: 19:30")
+        await _answer_manager_prompt(message, "Неверный формат времени. Пример: 19:30")
         return
 
     await state.update_data(event_time=event_time)
     await state.set_state(EventCreateStates.location)
-    await message.answer("Введите место проведения.")
+    await _answer_manager_prompt(message, "Введите место проведения.")
 
 
 @router.message(EventCreateStates.location)
 async def create_event_location(message: Message, session: AsyncSession, state: FSMContext) -> None:
     if not message.text or len(message.text.strip()) < 2:
-        await message.answer("Введите место проведения.")
+        await _answer_manager_prompt(message, "Введите место проведения.")
         return
 
     data = await state.get_data()
@@ -158,7 +250,7 @@ async def create_event_location(message: Message, session: AsyncSession, state: 
     await state.clear()
     await message.answer(
         "Мероприятие создано.\n\n" + format_event_card(event),
-        reply_markup=manager_menu_keyboard(),
+        reply_markup=_manager_menu_reply_markup(message),
     )
 
 
@@ -168,7 +260,7 @@ async def events_list(message: Message, session: AsyncSession) -> None:
         return
 
     events = await list_events(session)
-    await message.answer(format_events_list(events), reply_markup=manager_menu_keyboard())
+    await message.answer(format_events_list(events), reply_markup=_manager_menu_reply_markup(message))
 
 
 @router.message(F.text == EDIT_EVENT)
@@ -179,7 +271,7 @@ async def edit_event_start(message: Message, session: AsyncSession, state: FSMCo
     await state.clear()
     events = await list_events(session)
     if not events:
-        await message.answer("Мероприятий пока нет.", reply_markup=manager_menu_keyboard())
+        await message.answer("Мероприятий пока нет.", reply_markup=_manager_menu_reply_markup(message))
         return
 
     await message.answer("Выберите мероприятие для редактирования:", reply_markup=event_admin_events_keyboard(events, "edit"))
@@ -227,7 +319,7 @@ async def edit_event_field(callback: CallbackQuery, session: AsyncSession, state
     await state.set_state(EventEditStates.new_value)
 
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(prompts[field])
+        await _answer_manager_prompt(callback.message, prompts[field])
     await callback.answer()
 
 
@@ -237,7 +329,7 @@ async def edit_event_new_value(message: Message, session: AsyncSession, state: F
         return
 
     if not message.text or len(message.text.strip()) < 1:
-        await message.answer("Введите новое значение.")
+        await _answer_manager_prompt(message, "Введите новое значение.")
         return
 
     data = await state.get_data()
@@ -253,19 +345,19 @@ async def edit_event_new_value(message: Message, session: AsyncSession, state: F
         else:
             value = raw_value
     except ValueError:
-        await message.answer("Неверный формат. Для даты используйте YYYY-MM-DD, для времени — HH:MM.")
+        await _answer_manager_prompt(message, "Неверный формат. Для даты используйте YYYY-MM-DD, для времени — HH:MM.")
         return
 
     event = await update_event_field(session, event_id=event_id, field=field, value=value)
     if event is None:
         await state.clear()
-        await message.answer("Мероприятие не найдено.", reply_markup=manager_menu_keyboard())
+        await message.answer("Мероприятие не найдено.", reply_markup=_manager_menu_reply_markup(message))
         return
 
     await state.clear()
     await message.answer(
         "Мероприятие обновлено.\n\n" + format_event_card(event),
-        reply_markup=manager_menu_keyboard(),
+        reply_markup=_manager_menu_reply_markup(message),
     )
 
 
@@ -277,7 +369,7 @@ async def delete_event_start(message: Message, session: AsyncSession, state: FSM
     await state.clear()
     events = await list_events(session)
     if not events:
-        await message.answer("Мероприятий пока нет.", reply_markup=manager_menu_keyboard())
+        await message.answer("Мероприятий пока нет.", reply_markup=_manager_menu_reply_markup(message))
         return
 
     await message.answer("Выберите мероприятие для удаления:", reply_markup=event_admin_events_keyboard(events, "delete"))
