@@ -17,6 +17,7 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    city: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
     event_time: Mapped[time] = mapped_column(Time, nullable=False)
     location: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -90,6 +90,17 @@ async def create_event_title(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(title=message.text.strip())
+    await state.set_state(EventCreateStates.city)
+    await message.answer("Введите город проведения.")
+
+
+@router.message(EventCreateStates.city)
+async def create_event_city(message: Message, state: FSMContext) -> None:
+    if not message.text or len(message.text.strip()) < 2:
+        await message.answer("Введите город проведения.")
+        return
+
+    await state.update_data(city=message.text.strip())
     await state.set_state(EventCreateStates.event_date)
     await message.answer("Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
 
@@ -138,6 +149,7 @@ async def create_event_location(message: Message, session: AsyncSession, state: 
     event = await create_event(
         session,
         title=data["title"],
+        city=data["city"],
         event_date=data["event_date"],
         event_time=data["event_time"],
         location=message.text.strip(),
@@ -202,6 +214,7 @@ async def edit_event_field(callback: CallbackQuery, session: AsyncSession, state
 
     prompts = {
         "title": "Введите новое название.",
+        "city": "Введите новый город проведения.",
         "event_date": "Введите новую дату в формате YYYY-MM-DD.",
         "event_time": "Введите новое время в формате HH:MM.",
         "location": "Введите новое место проведения.",

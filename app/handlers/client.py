@@ -7,11 +7,11 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
-from app.keyboards.inline import events_buy_keyboard, order_status_keyboard
+from app.keyboards.inline import event_cities_keyboard, events_buy_keyboard, order_status_keyboard
 from app.keyboards.reply import BUY_TICKET, CONTACT_MANAGER, MY_ORDERS, main_menu_keyboard
-from app.services.events import get_event, list_events
+from app.services.events import get_event, list_event_cities, list_events_by_city
 from app.services.orders import create_order, list_user_orders
-from app.services.users import get_user_by_telegram_id
+from app.services.users import create_or_update_user, get_user_by_telegram_id
 from app.states.contact import ManagerContactStates
 from app.states.purchase import PurchaseStates
 from app.utils.formatters import (
@@ -34,7 +34,26 @@ async def _get_registered_user(message: Message, session: AsyncSession):
     if user is None or not user.phone_number:
         await message.answer("Сначала отправьте номер телефона через /start.")
         return None
-    return user
+
+    return await create_or_update_user(
+        session,
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+    )
+
+
+async def _ask_city(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    cities = await list_event_cities(session)
+    if not cities:
+        await message.answer("Сейчас нет доступных мероприятий.", reply_markup=main_menu_keyboard())
+        return
+
+    await state.set_state(PurchaseStates.choosing_city)
+    await state.update_data(cities=cities)
+    await message.answer("Выберите город проведения:", reply_markup=event_cities_keyboard(cities))
 
 
 @router.message(F.text == BUY_TICKET)
@@ -43,13 +62,47 @@ async def buy_ticket_start(message: Message, session: AsyncSession, state: FSMCo
     if user is None:
         return
 
-    events = await list_events(session)
-    if not events:
-        await message.answer("Сейчас нет доступных мероприятий.", reply_markup=main_menu_keyboard())
+    await _ask_city(message, session, state)
+
+
+@router.callback_query(F.data.startswith("buy_city:"))
+async def buy_ticket_choose_city(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if callback.from_user is None or callback.data is None:
         return
 
+    user = await get_user_by_telegram_id(session, callback.from_user.id)
+    if user is None or not user.phone_number:
+        await callback.answer("Сначала отправьте номер телефона через /start.", show_alert=True)
+        return
+
+    try:
+        city_index = int(callback.data.split(":", maxsplit=1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректный город.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    cities = data.get("cities")
+    if not isinstance(cities, list) or city_index < 0 or city_index >= len(cities):
+        await callback.answer("Выбор города устарел. Начните заново через меню.", show_alert=True)
+        return
+
+    city = str(cities[city_index])
+    events = await list_events_by_city(session, city)
+    if not events:
+        await callback.answer("В этом городе сейчас нет доступных мероприятий.", show_alert=True)
+        return
+
+    await state.update_data(city=city)
     await state.set_state(PurchaseStates.choosing_event)
-    await message.answer("Выберите мероприятие:", reply_markup=events_buy_keyboard(events))
+
+    text = f"Город: <b>{safe(city)}</b>\nВыберите мероприятие:"
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(text, reply_markup=events_buy_keyboard(events))
+    else:
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("buy_event:"))
@@ -57,10 +110,20 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
     if callback.from_user is None or callback.data is None:
         return
 
+    data = await state.get_data()
+    selected_city = data.get("city")
+    if not isinstance(selected_city, str) or not selected_city:
+        await callback.answer("Сначала выберите город.", show_alert=True)
+        return
+
     event_id = int(callback.data.split(":", maxsplit=1)[1])
     event = await get_event(session, event_id)
     if event is None:
         await callback.answer("Мероприятие не найдено.", show_alert=True)
+        return
+
+    if event.city != selected_city:
+        await callback.answer("Мероприятие не относится к выбранному городу.", show_alert=True)
         return
 
     user = await get_user_by_telegram_id(session, callback.from_user.id)
@@ -73,6 +136,7 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
 
     text = (
         f"Вы выбрали: <b>{safe(event.title)}</b>\n"
+        f"Город: {safe(event.city)}\n"
         f"Дата: {event.event_date:%d.%m.%Y}\n"
         f"Время: {event.event_time:%H:%M}\n"
         f"Место: {safe(event.location)}\n\n"

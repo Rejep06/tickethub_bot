@@ -4,8 +4,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.keyboards.inline import event_cities_keyboard
 from app.keyboards.reply import contact_keyboard, main_menu_keyboard
+from app.services.events import list_event_cities
 from app.services.users import create_or_update_user
+from app.states.purchase import PurchaseStates
 
 router = Router()
 
@@ -40,10 +43,22 @@ async def handle_contact(message: Message, session: AsyncSession, state: FSMCont
         telegram_id=message.from_user.id,
         username=message.from_user.username,
         phone_number=message.contact.phone_number,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
     )
 
     await state.clear()
+    cities = await list_event_cities(session)
+    if not cities:
+        await message.answer(
+            "Регистрация завершена. Сейчас нет доступных мероприятий.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    await state.set_state(PurchaseStates.choosing_city)
+    await state.update_data(cities=cities)
     await message.answer(
-        "Регистрация завершена. Выберите действие в меню.",
-        reply_markup=main_menu_keyboard(),
+        "Регистрация завершена. Выберите город проведения:",
+        reply_markup=event_cities_keyboard(cities),
     )

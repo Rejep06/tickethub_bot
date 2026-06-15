@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -11,6 +11,14 @@ def _status_value(status: OrderStatus | str | None) -> str | None:
     if isinstance(status, OrderStatus):
         return status.value
     return status
+
+
+def event_cities_keyboard(cities: Sequence[str]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for index, city in enumerate(cities):
+        builder.button(text=city[:64], callback_data=f"buy_city:{index}")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 def events_buy_keyboard(events: Iterable[Event]) -> InlineKeyboardMarkup:
@@ -45,7 +53,7 @@ def order_status_keyboard(order_id: int, current_status: OrderStatus | str | Non
 def event_admin_events_keyboard(events: Iterable[Event], action: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for event in events:
-        button_text = f"#{event.id} {event.title} — {event.event_date:%d.%m.%Y}"
+        button_text = f"#{event.id} {event.city} — {event.title} — {event.event_date:%d.%m.%Y}"
         builder.button(text=button_text[:64], callback_data=f"event_{action}:{event.id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -54,6 +62,7 @@ def event_admin_events_keyboard(events: Iterable[Event], action: str) -> InlineK
 def event_fields_keyboard(event_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Название", callback_data=f"event_field:{event_id}:title")
+    builder.button(text="Город", callback_data=f"event_field:{event_id}:city")
     builder.button(text="Дата", callback_data=f"event_field:{event_id}:event_date")
     builder.button(text="Время", callback_data=f"event_field:{event_id}:event_time")
     builder.button(text="Место", callback_data=f"event_field:{event_id}:location")

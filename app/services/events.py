@@ -7,9 +7,33 @@ from app.models.event import Event
 from app.models.order import Order
 
 
+def normalize_city(city: str) -> str:
+    return " ".join(city.strip().split())
+
+
 async def list_events(session: AsyncSession) -> list[Event]:
     result = await session.execute(
         select(Event).order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_event_cities(session: AsyncSession) -> list[str]:
+    result = await session.execute(
+        select(Event.city)
+        .where(Event.city.is_not(None), func.length(func.trim(Event.city)) > 0)
+        .distinct()
+        .order_by(Event.city.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_events_by_city(session: AsyncSession, city: str) -> list[Event]:
+    normalized_city = normalize_city(city)
+    result = await session.execute(
+        select(Event)
+        .where(Event.city == normalized_city)
+        .order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
     )
     return list(result.scalars().all())
 
@@ -22,12 +46,14 @@ async def create_event(
     session: AsyncSession,
     *,
     title: str,
+    city: str,
     event_date: date,
     event_time: time,
     location: str,
 ) -> Event:
     event = Event(
         title=title,
+        city=normalize_city(city),
         event_date=event_date,
         event_time=event_time,
         location=location,
@@ -48,8 +74,11 @@ async def update_event_field(
     if event is None:
         return None
 
-    if field not in {"title", "event_date", "event_time", "location"}:
+    if field not in {"title", "city", "event_date", "event_time", "location"}:
         raise ValueError(f"Unsupported event field: {field}")
+
+    if field == "city" and isinstance(value, str):
+        value = normalize_city(value)
 
     setattr(event, field, value)
     await session.flush()

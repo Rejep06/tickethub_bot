@@ -37,10 +37,18 @@ def format_username(username: str | None) -> str:
     return f"@{escape(username)}"
 
 
+def format_full_name(user: User) -> str:
+    parts = [part for part in (user.first_name, user.last_name) if part]
+    if not parts:
+        return "—"
+    return safe(" ".join(parts))
+
+
 def format_event_card(event: Event) -> str:
     return (
         f"<b>Мероприятие #{event.id}</b>\n"
         f"Название: {safe(event.title)}\n"
+        f"Город: {safe(event.city)}\n"
         f"Дата: {event.event_date:%d.%m.%Y}\n"
         f"Время: {event.event_time:%H:%M}\n"
         f"Место: {safe(event.location)}"
@@ -66,11 +74,13 @@ def format_order_for_manager(order: Order, user: User | None = None, event: Even
     return (
         f"<b>Заказ #{order.id}</b>\n\n"
         f"<b>Мероприятие</b>: {safe(event.title)}\n"
+        f"<b>Город мероприятия</b>: {safe(event.city)}\n"
         f"<b>Дата мероприятия</b>: {event.event_date:%d.%m.%Y}\n"
         f"<b>Время мероприятия</b>: {event.event_time:%H:%M}\n"
         f"<b>Место мероприятия</b>: {safe(event.location)}\n"
         f"<b>Количество билетов</b>: {order.quantity}\n"
         f"<b>Город/место клиента</b>: {safe(order.customer_location)}\n\n"
+        f"<b>Имя</b>: {format_full_name(user)}\n"
         f"<b>Username</b>: {format_username(user.username)}\n"
         f"<b>Телефон</b>: {safe(user.phone_number)}\n"
         f"<b>Telegram ID</b>: <code>{user.telegram_id}</code>\n"
@@ -81,6 +91,7 @@ def format_order_for_manager(order: Order, user: User | None = None, event: Even
 def format_contact_to_manager(user: User) -> str:
     return (
         "<b>Сообщение клиента менеджерам</b>\n\n"
+        f"<b>Имя</b>: {format_full_name(user)}\n"
         f"<b>Username</b>: {format_username(user.username)}\n"
         f"<b>Телефон</b>: {safe(user.phone_number)}\n"
         f"<b>Telegram ID</b>: <code>{user.telegram_id}</code>"
@@ -100,6 +111,7 @@ def format_user_orders(orders: Iterable[Order]) -> str:
                 "",
                 f"<b>Заказ #{order.id}</b>",
                 f"Мероприятие: {safe(event.title)}",
+                f"Город мероприятия: {safe(event.city)}",
                 f"Количество: {order.quantity}",
                 f"Статус: {status_label(order.status)}",
                 f"Дата заказа: {format_date_time(order.created_at)}",
