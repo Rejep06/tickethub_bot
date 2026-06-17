@@ -7,9 +7,24 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
-from app.keyboards.inline import event_cities_keyboard, events_buy_keyboard, order_status_keyboard
+from app.keyboards.inline import (
+    event_cities_keyboard,
+    event_types_keyboard,
+    events_buy_keyboard,
+    order_status_keyboard,
+    sport_types_keyboard,
+)
 from app.keyboards.reply import BUY_TICKET, CONTACT_MANAGER, MY_ORDERS, main_menu_keyboard
-from app.services.events import get_event, list_event_cities, list_events_by_city
+from app.services.events import (
+    DEFAULT_EVENT_TYPE,
+    event_type_label,
+    get_event,
+    list_event_cities,
+    list_event_types_by_city,
+    list_events_by_filters,
+    list_sport_types_by_city,
+    sport_type_label,
+)
 from app.services.orders import create_order, list_user_orders
 from app.services.users import create_or_update_user, get_user_by_telegram_id
 from app.states.contact import ManagerContactStates
@@ -56,6 +71,45 @@ async def _ask_city(message: Message, session: AsyncSession, state: FSMContext) 
     await message.answer("Выберите город проведения:", reply_markup=event_cities_keyboard(cities))
 
 
+async def _show_events_for_filter(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+    *,
+    city: str,
+    event_type: str,
+    sport_type: str | None = None,
+) -> None:
+    events = await list_events_by_filters(
+        session,
+        city=city,
+        event_type=event_type,
+        sport_type=sport_type,
+    )
+    if not events:
+        await callback.answer("По выбранным параметрам сейчас нет доступных мероприятий.", show_alert=True)
+        return
+
+    await state.update_data(event_type=event_type, sport_type=sport_type)
+    await state.set_state(PurchaseStates.choosing_event)
+
+    filter_lines = [
+        f"Город: <b>{safe(city)}</b>",
+        f"Тип события: <b>{safe(event_type_label(event_type))}</b>",
+    ]
+    if event_type == DEFAULT_EVENT_TYPE:
+        filter_lines.append(f"Тип спорта: <b>{safe(sport_type_label(sport_type))}</b>")
+    filter_lines.append("Выберите мероприятие:")
+
+    text = "\n".join(filter_lines)
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(text, reply_markup=events_buy_keyboard(events))
+    else:
+        await callback.answer(text, show_alert=True)
+        return
+    await callback.answer()
+
+
 @router.message(F.text == BUY_TICKET)
 async def buy_ticket_start(message: Message, session: AsyncSession, state: FSMContext) -> None:
     user = await _get_registered_user(message, session)
@@ -88,21 +142,94 @@ async def buy_ticket_choose_city(callback: CallbackQuery, session: AsyncSession,
         return
 
     city = str(cities[city_index])
-    events = await list_events_by_city(session, city)
-    if not events:
+    event_types = await list_event_types_by_city(session, city)
+    if not event_types:
         await callback.answer("В этом городе сейчас нет доступных мероприятий.", show_alert=True)
         return
 
-    await state.update_data(city=city)
-    await state.set_state(PurchaseStates.choosing_event)
+    await state.update_data(city=city, event_types=event_types)
+    await state.set_state(PurchaseStates.choosing_event_type)
 
-    text = f"Город: <b>{safe(city)}</b>\nВыберите мероприятие:"
+    text = f"Город: <b>{safe(city)}</b>\nВыберите тип события:"
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(text, reply_markup=events_buy_keyboard(events))
+        await callback.message.edit_text(text, reply_markup=event_types_keyboard(event_types))
     else:
         await callback.answer(text, show_alert=True)
         return
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("buy_event_type:"))
+async def buy_ticket_choose_event_type(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if callback.from_user is None or callback.data is None:
+        return
+
+    data = await state.get_data()
+    city = data.get("city")
+    event_types = data.get("event_types")
+    if not isinstance(city, str) or not city:
+        await callback.answer("Сначала выберите город.", show_alert=True)
+        return
+
+    event_type = callback.data.split(":", maxsplit=1)[1]
+    if isinstance(event_types, list) and event_type not in event_types:
+        await callback.answer("Этот тип события больше недоступен. Начните заново через меню.", show_alert=True)
+        return
+
+    if event_type == DEFAULT_EVENT_TYPE:
+        sport_types = await list_sport_types_by_city(session, city)
+        if not sport_types:
+            await callback.answer("В этом городе сейчас нет доступных спортивных мероприятий.", show_alert=True)
+            return
+
+        await state.update_data(event_type=event_type, sport_types=sport_types)
+        await state.set_state(PurchaseStates.choosing_sport_type)
+
+        text = (
+            f"Город: <b>{safe(city)}</b>\n"
+            f"Тип события: <b>{safe(event_type_label(event_type))}</b>\n"
+            "Выберите тип спорта:"
+        )
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(text, reply_markup=sport_types_keyboard(sport_types))
+        else:
+            await callback.answer(text, show_alert=True)
+            return
+        await callback.answer()
+        return
+
+    await _show_events_for_filter(callback, session, state, city=city, event_type=event_type)
+
+
+@router.callback_query(F.data.startswith("buy_sport_type:"))
+async def buy_ticket_choose_sport_type(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if callback.from_user is None or callback.data is None:
+        return
+
+    data = await state.get_data()
+    city = data.get("city")
+    event_type = data.get("event_type")
+    sport_types = data.get("sport_types")
+    if not isinstance(city, str) or not city:
+        await callback.answer("Сначала выберите город.", show_alert=True)
+        return
+    if event_type != DEFAULT_EVENT_TYPE:
+        await callback.answer("Сначала выберите спортивный тип события.", show_alert=True)
+        return
+
+    sport_type = callback.data.split(":", maxsplit=1)[1]
+    if isinstance(sport_types, list) and sport_type not in sport_types:
+        await callback.answer("Этот тип спорта больше недоступен. Начните заново через меню.", show_alert=True)
+        return
+
+    await _show_events_for_filter(
+        callback,
+        session,
+        state,
+        city=city,
+        event_type=DEFAULT_EVENT_TYPE,
+        sport_type=sport_type,
+    )
 
 
 @router.callback_query(F.data.startswith("buy_event:"))
@@ -112,8 +239,13 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
 
     data = await state.get_data()
     selected_city = data.get("city")
+    selected_event_type = data.get("event_type")
+    selected_sport_type = data.get("sport_type")
     if not isinstance(selected_city, str) or not selected_city:
         await callback.answer("Сначала выберите город.", show_alert=True)
+        return
+    if not isinstance(selected_event_type, str) or not selected_event_type:
+        await callback.answer("Сначала выберите тип события.", show_alert=True)
         return
 
     event_id = int(callback.data.split(":", maxsplit=1)[1])
@@ -125,6 +257,12 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
     if event.city != selected_city:
         await callback.answer("Мероприятие не относится к выбранному городу.", show_alert=True)
         return
+    if event.event_type != selected_event_type:
+        await callback.answer("Мероприятие не относится к выбранному типу события.", show_alert=True)
+        return
+    if selected_event_type == DEFAULT_EVENT_TYPE and event.sport_type != selected_sport_type:
+        await callback.answer("Мероприятие не относится к выбранному типу спорта.", show_alert=True)
+        return
 
     user = await get_user_by_telegram_id(session, callback.from_user.id)
     if user is None or not user.phone_number:
@@ -134,9 +272,15 @@ async def buy_ticket_choose_event(callback: CallbackQuery, session: AsyncSession
     await state.update_data(event_id=event.id)
     await state.set_state(PurchaseStates.quantity)
 
+    type_lines = [f"Тип события: {safe(event_type_label(event.event_type))}"]
+    if event.event_type == DEFAULT_EVENT_TYPE:
+        type_lines.append(f"Тип спорта: {safe(sport_type_label(event.sport_type))}")
+    type_text = "\n".join(type_lines)
+
     text = (
         f"Вы выбрали: <b>{safe(event.title)}</b>\n"
         f"Город: {safe(event.city)}\n"
+        f"{type_text}\n"
         f"Дата: {event.event_date:%d.%m.%Y}\n"
         f"Время: {event.event_time:%H:%M}\n"
         f"Место: {safe(event.location)}\n\n"
@@ -173,6 +317,8 @@ async def buy_ticket_quantity(
     data = await state.get_data()
     event_id = int(data["event_id"])
     selected_city = data.get("city")
+    selected_event_type = data.get("event_type")
+    selected_sport_type = data.get("sport_type")
 
     user = await get_user_by_telegram_id(session, message.from_user.id)
     if user is None or not user.phone_number:
@@ -188,7 +334,29 @@ async def buy_ticket_quantity(
 
     if isinstance(selected_city, str) and selected_city and event.city != selected_city:
         await state.clear()
-        await message.answer("Мероприятие больше не относится к выбранному городу. Начните заказ заново.", reply_markup=main_menu_keyboard())
+        await message.answer(
+            "Мероприятие больше не относится к выбранному городу. Начните заказ заново.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+    if isinstance(selected_event_type, str) and selected_event_type and event.event_type != selected_event_type:
+        await state.clear()
+        await message.answer(
+            "Мероприятие больше не относится к выбранному типу события. Начните заказ заново.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+    if (
+        selected_event_type == DEFAULT_EVENT_TYPE
+        and isinstance(selected_sport_type, str)
+        and selected_sport_type
+        and event.sport_type != selected_sport_type
+    ):
+        await state.clear()
+        await message.answer(
+            "Мероприятие больше не относится к выбранному типу спорта. Начните заказ заново.",
+            reply_markup=main_menu_keyboard(),
+        )
         return
 
     order = await create_order(

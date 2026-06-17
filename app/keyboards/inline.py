@@ -5,6 +5,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.models.event import Event
 from app.models.order import OrderStatus
+from app.services.events import (
+    EVENT_TYPE_LABELS,
+    SPORT_TYPE_LABELS,
+    event_type_label,
+    sport_type_label,
+)
 
 
 def _status_value(status: OrderStatus | str | None) -> str | None:
@@ -20,6 +26,38 @@ def event_cities_keyboard(cities: Sequence[str]) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
+
+
+def event_types_keyboard(event_types: Sequence[str]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for event_type in event_types:
+        builder.button(text=event_type_label(event_type), callback_data=f"buy_event_type:{event_type}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def sport_types_keyboard(sport_types: Sequence[str]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for sport_type in sport_types:
+        builder.button(text=sport_type_label(sport_type), callback_data=f"buy_sport_type:{sport_type}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_event_types_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for event_type, label in EVENT_TYPE_LABELS.items():
+        builder.button(text=label, callback_data=f"event_create_type:{event_type}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def admin_sport_types_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for sport_type, label in SPORT_TYPE_LABELS.items():
+        builder.button(text=label, callback_data=f"event_create_sport:{sport_type}")
+    builder.adjust(2)
+    return builder.as_markup()
 
 def events_buy_keyboard(events: Iterable[Event]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -63,7 +101,10 @@ def manager_inline_menu_keyboard() -> InlineKeyboardMarkup:
 def event_admin_events_keyboard(events: Iterable[Event], action: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for event in events:
-        button_text = f"#{event.id} {event.city} — {event.title} — {event.event_date:%d.%m.%Y}"
+        type_text = event_type_label(event.event_type)
+        if event.event_type == "sport" and event.sport_type:
+            type_text = f"{type_text}/{sport_type_label(event.sport_type)}"
+        button_text = f"#{event.id} {event.city} — {type_text} — {event.title} — {event.event_date:%d.%m.%Y}"
         builder.button(text=button_text[:64], callback_data=f"event_{action}:{event.id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -73,6 +114,8 @@ def event_fields_keyboard(event_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Название", callback_data=f"event_field:{event_id}:title")
     builder.button(text="Город", callback_data=f"event_field:{event_id}:city")
+    builder.button(text="Тип события", callback_data=f"event_field:{event_id}:event_type")
+    builder.button(text="Тип спорта", callback_data=f"event_field:{event_id}:sport_type")
     builder.button(text="Дата", callback_data=f"event_field:{event_id}:event_date")
     builder.button(text="Время", callback_data=f"event_field:{event_id}:event_time")
     builder.button(text="Место", callback_data=f"event_field:{event_id}:location")

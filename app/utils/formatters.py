@@ -5,6 +5,7 @@ from html import escape
 from app.models.event import Event
 from app.models.order import Order, OrderStatus
 from app.models.user import User
+from app.services.events import DEFAULT_EVENT_TYPE, event_type_label, sport_type_label
 
 
 def safe(value: object | None) -> str:
@@ -44,11 +45,19 @@ def format_full_name(user: User) -> str:
     return safe(" ".join(parts))
 
 
+def format_event_type_lines(event: Event) -> str:
+    lines = [f"Тип события: {safe(event_type_label(event.event_type))}"]
+    if event.event_type == DEFAULT_EVENT_TYPE:
+        lines.append(f"Тип спорта: {safe(sport_type_label(event.sport_type))}")
+    return "\n".join(lines)
+
+
 def format_event_card(event: Event) -> str:
     return (
         f"<b>Мероприятие #{event.id}</b>\n"
         f"Название: {safe(event.title)}\n"
         f"Город: {safe(event.city)}\n"
+        f"{format_event_type_lines(event)}\n"
         f"Дата: {event.event_date:%d.%m.%Y}\n"
         f"Время: {event.event_time:%H:%M}\n"
         f"Место: {safe(event.location)}"
@@ -75,7 +84,9 @@ def format_order_for_manager(order: Order, user: User | None = None, event: Even
         f"<b>Заказ #{order.id}</b>\n\n"
         f"<b>Мероприятие</b>: {safe(event.title)}\n"
         f"<b>Город мероприятия</b>: {safe(event.city)}\n"
-        f"<b>Дата мероприятия</b>: {event.event_date:%d.%m.%Y}\n"
+        f"<b>Тип события</b>: {safe(event_type_label(event.event_type))}\n"
+        + (f"<b>Тип спорта</b>: {safe(sport_type_label(event.sport_type))}\n" if event.event_type == DEFAULT_EVENT_TYPE else "")
+        + f"<b>Дата мероприятия</b>: {event.event_date:%d.%m.%Y}\n"
         f"<b>Время мероприятия</b>: {event.event_time:%H:%M}\n"
         f"<b>Место мероприятия</b>: {safe(event.location)}\n"
         f"<b>Количество билетов</b>: {order.quantity}\n\n"
@@ -111,6 +122,12 @@ def format_user_orders(orders: Iterable[Order]) -> str:
                 f"<b>Заказ #{order.id}</b>",
                 f"Мероприятие: {safe(event.title)}",
                 f"Город мероприятия: {safe(event.city)}",
+                f"Тип события: {safe(event_type_label(event.event_type))}",
+                *(
+                    [f"Тип спорта: {safe(sport_type_label(event.sport_type))}"]
+                    if event.event_type == DEFAULT_EVENT_TYPE
+                    else []
+                ),
                 f"Количество: {order.quantity}",
                 f"Статус: {status_label(order.status)}",
                 f"Дата заказа: {format_date_time(order.created_at)}",

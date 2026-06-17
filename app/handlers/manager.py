@@ -7,6 +7,8 @@ from aiogram.types import CallbackQuery, ForceReply, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboards.inline import (
+    admin_event_types_keyboard,
+    admin_sport_types_keyboard,
     delete_confirm_keyboard,
     event_admin_events_keyboard,
     event_fields_keyboard,
@@ -20,10 +22,17 @@ from app.keyboards.reply import (
     manager_menu_keyboard,
 )
 from app.services.events import (
+    DEFAULT_EVENT_TYPE,
+    EVENT_TYPE_LABELS,
+    SPORT_TYPE_LABELS,
     create_event,
     delete_event,
+    event_type_label,
     get_event,
     list_events,
+    normalize_event_type,
+    normalize_sport_type,
+    sport_type_label,
     update_event_field,
 )
 from app.services.managers import is_manager
@@ -87,6 +96,50 @@ async def _answer_manager_prompt(message: Message, text: str) -> None:
     await message.answer(text, reply_markup=_manager_text_reply_markup(message))
 
 
+def _event_type_prompt() -> str:
+    options = ", ".join(EVENT_TYPE_LABELS.values())
+    return (
+        "Выберите тип события кнопкой или ответьте текстом.\n"
+        f"Доступные варианты: {options}.\n"
+        "По умолчанию: Спорт. Для значения по умолчанию можно отправить '-'."
+    )
+
+
+def _sport_type_prompt() -> str:
+    options = ", ".join(SPORT_TYPE_LABELS.values())
+    return (
+        "Выберите тип спорта кнопкой или ответьте текстом.\n"
+        f"Доступные варианты: {options}.\n"
+        "По умолчанию: Футбол. Для значения по умолчанию можно отправить '-'."
+    )
+
+
+async def _ask_event_type(message: Message) -> None:
+    await message.answer(_event_type_prompt(), reply_markup=admin_event_types_keyboard())
+
+
+async def _ask_sport_type(message: Message) -> None:
+    await message.answer(_sport_type_prompt(), reply_markup=admin_sport_types_keyboard())
+
+
+async def _continue_create_after_event_type(message: Message, state: FSMContext, event_type: str) -> None:
+    await state.update_data(event_type=event_type)
+    if event_type == DEFAULT_EVENT_TYPE:
+        await state.set_state(EventCreateStates.sport_type)
+        await _ask_sport_type(message)
+        return
+
+    await state.update_data(sport_type=None)
+    await state.set_state(EventCreateStates.event_date)
+    await _answer_manager_prompt(message, "Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
+
+
+async def _continue_create_after_sport_type(message: Message, state: FSMContext, sport_type: str) -> None:
+    await state.update_data(sport_type=sport_type)
+    await state.set_state(EventCreateStates.event_date)
+    await _answer_manager_prompt(message, "Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
+
+
 def _manager_group_menu_text() -> str:
     return (
         "Меню менеджера.\n\n"
@@ -123,6 +176,7 @@ async def manager_menu_action(callback: CallbackQuery, session: AsyncSession, st
     action = callback.data.split(":", maxsplit=1)[1]
 
     if action == "create":
+        await state.clear()
         await state.set_state(EventCreateStates.title)
         await _answer_manager_prompt(callback.message, "Введите название мероприятия.")
         await callback.answer()
@@ -171,6 +225,7 @@ async def create_event_start(message: Message, session: AsyncSession, state: FSM
     if not await _require_manager_message(message, session):
         return
 
+    await state.clear()
     await state.set_state(EventCreateStates.title)
     await _answer_manager_prompt(message, "Введите название мероприятия.")
 
@@ -193,8 +248,62 @@ async def create_event_city(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(city=message.text.strip())
-    await state.set_state(EventCreateStates.event_date)
-    await _answer_manager_prompt(message, "Введите дату мероприятия в формате YYYY-MM-DD. Например: 2026-06-15")
+    await state.set_state(EventCreateStates.event_type)
+    await _ask_event_type(message)
+
+
+@router.callback_query(F.data.startswith("event_create_type:"))
+async def create_event_type_callback(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if not await _require_manager_callback(callback, session):
+        return
+    if callback.data is None or not isinstance(callback.message, Message):
+        return
+
+    current_state = await state.get_state()
+    if current_state != EventCreateStates.event_type.state:
+        await callback.answer("Этот выбор уже неактуален.", show_alert=True)
+        return
+
+    event_type = normalize_event_type(callback.data.split(":", maxsplit=1)[1])
+    await _continue_create_after_event_type(callback.message, state, event_type)
+    await callback.answer(event_type_label(event_type))
+
+
+@router.message(EventCreateStates.event_type)
+async def create_event_type_message(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        await _ask_event_type(message)
+        return
+
+    event_type = normalize_event_type(message.text)
+    await _continue_create_after_event_type(message, state, event_type)
+
+
+@router.callback_query(F.data.startswith("event_create_sport:"))
+async def create_sport_type_callback(callback: CallbackQuery, session: AsyncSession, state: FSMContext) -> None:
+    if not await _require_manager_callback(callback, session):
+        return
+    if callback.data is None or not isinstance(callback.message, Message):
+        return
+
+    current_state = await state.get_state()
+    if current_state != EventCreateStates.sport_type.state:
+        await callback.answer("Этот выбор уже неактуален.", show_alert=True)
+        return
+
+    sport_type = normalize_sport_type(callback.data.split(":", maxsplit=1)[1])
+    await _continue_create_after_sport_type(callback.message, state, sport_type)
+    await callback.answer(sport_type_label(sport_type))
+
+
+@router.message(EventCreateStates.sport_type)
+async def create_sport_type_message(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        await _ask_sport_type(message)
+        return
+
+    sport_type = normalize_sport_type(message.text)
+    await _continue_create_after_sport_type(message, state, sport_type)
 
 
 @router.message(EventCreateStates.event_date)
@@ -242,6 +351,8 @@ async def create_event_location(message: Message, session: AsyncSession, state: 
         session,
         title=data["title"],
         city=data["city"],
+        event_type=data.get("event_type", DEFAULT_EVENT_TYPE),
+        sport_type=data.get("sport_type"),
         event_date=data["event_date"],
         event_time=data["event_time"],
         location=message.text.strip(),
@@ -307,6 +418,14 @@ async def edit_event_field(callback: CallbackQuery, session: AsyncSession, state
     prompts = {
         "title": "Введите новое название.",
         "city": "Введите новый город проведения.",
+        "event_type": (
+            "Введите новый тип события: спорт, концерт, театр, фестиваль, шоу, выставка или другое. "
+            "По умолчанию: спорт. Для значения по умолчанию можно отправить '-'."
+        ),
+        "sport_type": (
+            "Введите новый тип спорта: футбол, баскетбол, волейбол, хоккей, теннис, бокс, MMA, бег или другое. "
+            "По умолчанию: футбол. Для значения по умолчанию можно отправить '-'."
+        ),
         "event_date": "Введите новую дату в формате YYYY-MM-DD.",
         "event_time": "Введите новое время в формате HH:MM.",
         "location": "Введите новое место проведения.",
@@ -342,6 +461,10 @@ async def edit_event_new_value(message: Message, session: AsyncSession, state: F
             value = _parse_date(raw_value)
         elif field == "event_time":
             value = _parse_time(raw_value)
+        elif field == "event_type":
+            value = normalize_event_type(raw_value)
+        elif field == "sport_type":
+            value = normalize_sport_type(raw_value)
         else:
             value = raw_value
     except ValueError:
