@@ -9,15 +9,26 @@ async def create_order(
     session: AsyncSession,
     *,
     user_id: int,
-    event_id: int,
     quantity: int,
     customer_location: str,
+    event_id: int | None = None,
+    requested_event_title: str | None = None,
+    requested_city: str | None = None,
+    requested_event_type: str | None = None,
+    requested_sport_type: str | None = None,
 ) -> Order:
+    if event_id is None and not requested_event_title:
+        raise ValueError("Either event_id or requested_event_title must be provided")
+
     order = Order(
         user_id=user_id,
         event_id=event_id,
         quantity=quantity,
         customer_location=customer_location,
+        requested_event_title=requested_event_title,
+        requested_city=requested_city,
+        requested_event_type=requested_event_type,
+        requested_sport_type=requested_sport_type,
         status=OrderStatus.NEW,
     )
     session.add(order)

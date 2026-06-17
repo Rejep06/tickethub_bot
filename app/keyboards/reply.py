@@ -3,6 +3,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 BUY_TICKET = "Купить билет"
 CONTACT_MANAGER = "Связаться с менеджером"
+CUSTOM_ORDER = "Заказать событие не из списка"
 MY_ORDERS = "Мои заказы"
 
 CREATE_EVENT = "Создать мероприятие"
@@ -26,6 +27,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BUY_TICKET)],
+            [KeyboardButton(text=CUSTOM_ORDER)],
             [KeyboardButton(text=MY_ORDERS), KeyboardButton(text=CONTACT_MANAGER)],
         ],
         resize_keyboard=True,

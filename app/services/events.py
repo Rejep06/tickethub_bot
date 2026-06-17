@@ -7,6 +7,7 @@ from app.models.event import Event
 
 DEFAULT_EVENT_TYPE = "sport"
 DEFAULT_SPORT_TYPE = "football"
+ALL_FILTER_LABEL = "Все"
 
 EVENT_TYPE_LABELS: dict[str, str] = {
     "sport": "Спорт",
@@ -104,21 +105,61 @@ def normalize_sport_type(sport_type: str | None) -> str:
 
 
 def event_type_label(event_type: str | None) -> str:
+    if event_type is None:
+        return ALL_FILTER_LABEL
     normalized = normalize_event_type(event_type)
     return EVENT_TYPE_LABELS.get(normalized, normalized)
 
 
 def sport_type_label(sport_type: str | None) -> str:
+    if sport_type is None:
+        return ALL_FILTER_LABEL
     normalized = normalize_sport_type(sport_type)
     return SPORT_TYPE_LABELS.get(normalized, normalized)
+
+
+def city_label(city: str | None) -> str:
+    return ALL_FILTER_LABEL if city is None else city
 
 
 def is_sport_event_type(event_type: str | None) -> bool:
     return normalize_event_type(event_type) == DEFAULT_EVENT_TYPE
 
 
+def _active_event_filters() -> list:
+    return [Event.is_active.is_(True)]
+
+
+def _event_filter_conditions(
+    *,
+    city: str | None = None,
+    event_type: str | None = None,
+    sport_type: str | None = None,
+) -> list:
+    filters = _active_event_filters()
+
+    if city:
+        filters.append(Event.city == normalize_city(city))
+
+    if event_type:
+        normalized_event_type = normalize_event_type(event_type)
+        filters.append(Event.event_type == normalized_event_type)
+    elif sport_type:
+        # Тип спорта имеет смысл только для спортивных мероприятий.
+        filters.append(Event.event_type == DEFAULT_EVENT_TYPE)
+
+    if sport_type:
+        filters.append(Event.sport_type == normalize_sport_type(sport_type))
+
+    return filters
+
+
+def _not_empty(column) -> list:
+    return [column.is_not(None), func.length(func.trim(column)) > 0]
+
+
 async def list_events(session: AsyncSession, *, include_deleted: bool = False) -> list[Event]:
-    filters = [] if include_deleted else [Event.is_active.is_(True)]
+    filters = [] if include_deleted else _active_event_filters()
     result = await session.execute(
         select(Event)
         .where(*filters)
@@ -127,29 +168,12 @@ async def list_events(session: AsyncSession, *, include_deleted: bool = False) -
     return list(result.scalars().all())
 
 
-async def list_event_cities(session: AsyncSession) -> list[str]:
-    result = await session.execute(
-        select(Event.city)
-        .where(
-            Event.is_active.is_(True),
-            Event.city.is_not(None),
-            func.length(func.trim(Event.city)) > 0,
-        )
-        .distinct()
-        .order_by(Event.city.asc())
-    )
-    return list(result.scalars().all())
-
-
-async def list_event_types_by_city(session: AsyncSession, city: str) -> list[str]:
-    normalized_city = normalize_city(city)
+async def list_event_types(session: AsyncSession, *, city: str | None = None) -> list[str]:
     result = await session.execute(
         select(Event.event_type)
         .where(
-            Event.is_active.is_(True),
-            Event.city == normalized_city,
-            Event.event_type.is_not(None),
-            func.length(func.trim(Event.event_type)) > 0,
+            *_event_filter_conditions(city=city),
+            *_not_empty(Event.event_type),
         )
         .distinct()
         .order_by(Event.event_type.asc())
@@ -158,16 +182,42 @@ async def list_event_types_by_city(session: AsyncSession, city: str) -> list[str
     return sorted(set(event_types), key=lambda value: EVENT_TYPE_LABELS.get(value, value))
 
 
-async def list_sport_types_by_city(session: AsyncSession, city: str) -> list[str]:
-    normalized_city = normalize_city(city)
+async def list_event_cities(session: AsyncSession) -> list[str]:
+    return await list_event_cities_by_filters(session)
+
+
+async def list_event_cities_by_filters(
+    session: AsyncSession,
+    *,
+    event_type: str | None = None,
+    sport_type: str | None = None,
+) -> list[str]:
+    result = await session.execute(
+        select(Event.city)
+        .where(
+            *_event_filter_conditions(event_type=event_type, sport_type=sport_type),
+            *_not_empty(Event.city),
+        )
+        .distinct()
+        .order_by(Event.city.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_event_types_by_city(session: AsyncSession, city: str) -> list[str]:
+    return await list_event_types(session, city=city)
+
+
+async def list_sport_types(
+    session: AsyncSession,
+    *,
+    city: str | None = None,
+) -> list[str]:
     result = await session.execute(
         select(Event.sport_type)
         .where(
-            Event.is_active.is_(True),
-            Event.city == normalized_city,
-            Event.event_type == DEFAULT_EVENT_TYPE,
-            Event.sport_type.is_not(None),
-            func.length(func.trim(Event.sport_type)) > 0,
+            *_event_filter_conditions(city=city, event_type=DEFAULT_EVENT_TYPE),
+            *_not_empty(Event.sport_type),
         )
         .distinct()
         .order_by(Event.sport_type.asc())
@@ -176,11 +226,14 @@ async def list_sport_types_by_city(session: AsyncSession, city: str) -> list[str
     return sorted(set(sport_types), key=lambda value: SPORT_TYPE_LABELS.get(value, value))
 
 
+async def list_sport_types_by_city(session: AsyncSession, city: str) -> list[str]:
+    return await list_sport_types(session, city=city)
+
+
 async def list_events_by_city(session: AsyncSession, city: str) -> list[Event]:
-    normalized_city = normalize_city(city)
     result = await session.execute(
         select(Event)
-        .where(Event.is_active.is_(True), Event.city == normalized_city)
+        .where(*_event_filter_conditions(city=city))
         .order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
     )
     return list(result.scalars().all())
@@ -189,25 +242,13 @@ async def list_events_by_city(session: AsyncSession, city: str) -> list[Event]:
 async def list_events_by_filters(
     session: AsyncSession,
     *,
-    city: str,
-    event_type: str,
+    city: str | None = None,
+    event_type: str | None = None,
     sport_type: str | None = None,
 ) -> list[Event]:
-    normalized_city = normalize_city(city)
-    normalized_event_type = normalize_event_type(event_type)
-
-    filters = [
-        Event.is_active.is_(True),
-        Event.city == normalized_city,
-        Event.event_type == normalized_event_type,
-    ]
-
-    if normalized_event_type == DEFAULT_EVENT_TYPE and sport_type:
-        filters.append(Event.sport_type == normalize_sport_type(sport_type))
-
     result = await session.execute(
         select(Event)
-        .where(*filters)
+        .where(*_event_filter_conditions(city=city, event_type=event_type, sport_type=sport_type))
         .order_by(Event.event_date.asc(), Event.event_time.asc(), Event.id.asc())
     )
     return list(result.scalars().all())

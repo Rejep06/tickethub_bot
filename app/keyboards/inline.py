@@ -6,11 +6,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.models.event import Event
 from app.models.order import OrderStatus
 from app.services.events import (
+    ALL_FILTER_LABEL,
     EVENT_TYPE_LABELS,
     SPORT_TYPE_LABELS,
     event_type_label,
     sport_type_label,
 )
+
+ALL_FILTER_CALLBACK_VALUE = "__all__"
+CUSTOM_EVENT_CALLBACK_DATA = "buy_event_custom"
+CONTACT_MANAGER_CALLBACK_DATA = "buy_contact_manager"
 
 
 def _status_value(status: OrderStatus | str | None) -> str | None:
@@ -19,25 +24,20 @@ def _status_value(status: OrderStatus | str | None) -> str | None:
     return status
 
 
-def event_cities_keyboard(cities: Sequence[str]) -> InlineKeyboardMarkup:
+def event_types_keyboard(event_types: Sequence[str], *, include_all: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for index, city in enumerate(cities):
-        builder.button(text=city[:64], callback_data=f"buy_city:{index}")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-
-def event_types_keyboard(event_types: Sequence[str]) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
+    if include_all:
+        builder.button(text=ALL_FILTER_LABEL, callback_data=f"buy_event_type:{ALL_FILTER_CALLBACK_VALUE}")
     for event_type in event_types:
         builder.button(text=event_type_label(event_type), callback_data=f"buy_event_type:{event_type}")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def sport_types_keyboard(sport_types: Sequence[str]) -> InlineKeyboardMarkup:
+def sport_types_keyboard(sport_types: Sequence[str], *, include_all: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if include_all:
+        builder.button(text=ALL_FILTER_LABEL, callback_data=f"buy_sport_type:{ALL_FILTER_CALLBACK_VALUE}")
     for sport_type in sport_types:
         builder.button(text=sport_type_label(sport_type), callback_data=f"buy_sport_type:{sport_type}")
     builder.adjust(1)
@@ -59,11 +59,21 @@ def admin_sport_types_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(2)
     return builder.as_markup()
 
-def events_buy_keyboard(events: Iterable[Event]) -> InlineKeyboardMarkup:
+
+def events_buy_keyboard(
+    events: Iterable[Event],
+    *,
+    include_custom: bool = True,
+    include_contact_manager: bool = True,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for event in events:
-        button_text = f"{event.title} — {event.event_date:%d.%m.%Y}"
+        button_text = f"{event.title} — {event.city} — {event.event_date:%d.%m.%Y}"
         builder.button(text=button_text[:64], callback_data=f"buy_event:{event.id}")
+    if include_custom:
+        builder.button(text="Заказать событие не из списка", callback_data=CUSTOM_EVENT_CALLBACK_DATA)
+    if include_contact_manager:
+        builder.button(text="Связаться с менеджером", callback_data=CONTACT_MANAGER_CALLBACK_DATA)
     builder.adjust(1)
     return builder.as_markup()
 

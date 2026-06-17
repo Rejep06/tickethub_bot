@@ -29,9 +29,13 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_location: Mapped[str] = mapped_column(String(255), nullable=False)
+    requested_event_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    requested_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    requested_event_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    requested_sport_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[OrderStatus] = mapped_column(
         SAEnum(OrderStatus, native_enum=False),
         default=OrderStatus.NEW,
@@ -46,5 +50,5 @@ class Order(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="orders")
-    event: Mapped[Event] = relationship(back_populates="orders")
+    event: Mapped[Event | None] = relationship(back_populates="orders")
     manager: Mapped[Manager | None] = relationship(back_populates="orders")

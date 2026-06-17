@@ -5,7 +5,11 @@ from html import escape
 from app.models.event import Event
 from app.models.order import Order, OrderStatus
 from app.models.user import User
-from app.services.events import DEFAULT_EVENT_TYPE, event_type_label, sport_type_label
+from app.services.events import (
+    DEFAULT_EVENT_TYPE,
+    event_type_label,
+    sport_type_label,
+)
 
 
 def safe(value: object | None) -> str:
@@ -76,19 +80,69 @@ def format_events_list(events: Iterable[Event]) -> str:
     return "\n".join(lines)
 
 
+def _order_event_title(order: Order, event: Event | None) -> str:
+    if event is not None:
+        return event.title
+    return order.requested_event_title or "Свободный запрос клиента"
+
+
+def _order_city(order: Order, event: Event | None) -> str | None:
+    if event is not None:
+        return event.city
+    return order.requested_city or order.customer_location or None
+
+
+def _order_event_type(order: Order, event: Event | None) -> str | None:
+    if event is not None:
+        return event.event_type
+    return order.requested_event_type
+
+
+def _order_sport_type(order: Order, event: Event | None) -> str | None:
+    if event is not None:
+        return event.sport_type
+    return order.requested_sport_type
+
+
+def _format_order_event_details(order: Order, event: Event | None) -> str:
+    event_type = _order_event_type(order, event)
+    sport_type = _order_sport_type(order, event)
+    city = _order_city(order, event)
+
+    lines = [
+        f"<b>Мероприятие</b>: {safe(_order_event_title(order, event))}",
+    ]
+
+    if event is None:
+        lines.append("<b>Источник</b>: свободный запрос клиента, мероприятия нет в БД")
+
+    if event is not None or city:
+        lines.append(f"<b>Город мероприятия</b>: {safe(city)}")
+
+    lines.append(f"<b>Тип события</b>: {safe(event_type_label(event_type))}")
+
+    if event_type == DEFAULT_EVENT_TYPE:
+        lines.append(f"<b>Тип спорта</b>: {safe(sport_type_label(sport_type))}")
+
+    if event is not None:
+        lines.extend(
+            [
+                f"<b>Дата мероприятия</b>: {event.event_date:%d.%m.%Y}",
+                f"<b>Время мероприятия</b>: {event.event_time:%H:%M}",
+                f"<b>Место мероприятия</b>: {safe(event.location)}",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
 def format_order_for_manager(order: Order, user: User | None = None, event: Event | None = None) -> str:
     user = user or order.user
-    event = event or order.event
+    event = event if event is not None else order.event
 
     return (
         f"<b>Заказ #{order.id}</b>\n\n"
-        f"<b>Мероприятие</b>: {safe(event.title)}\n"
-        f"<b>Город мероприятия</b>: {safe(event.city)}\n"
-        f"<b>Тип события</b>: {safe(event_type_label(event.event_type))}\n"
-        + (f"<b>Тип спорта</b>: {safe(sport_type_label(event.sport_type))}\n" if event.event_type == DEFAULT_EVENT_TYPE else "")
-        + f"<b>Дата мероприятия</b>: {event.event_date:%d.%m.%Y}\n"
-        f"<b>Время мероприятия</b>: {event.event_time:%H:%M}\n"
-        f"<b>Место мероприятия</b>: {safe(event.location)}\n"
+        f"{_format_order_event_details(order, event)}\n"
         f"<b>Количество билетов</b>: {order.quantity}\n\n"
         f"<b>Имя</b>: {format_full_name(user)}\n"
         f"<b>Username</b>: {format_username(user.username)}\n"
@@ -116,16 +170,23 @@ def format_user_orders(orders: Iterable[Order]) -> str:
     lines = ["<b>Мои заказы</b>"]
     for order in order_list:
         event = order.event
+        event_type = _order_event_type(order, event)
+        sport_type = _order_sport_type(order, event)
         lines.extend(
             [
                 "",
                 f"<b>Заказ #{order.id}</b>",
-                f"Мероприятие: {safe(event.title)}",
-                f"Город мероприятия: {safe(event.city)}",
-                f"Тип события: {safe(event_type_label(event.event_type))}",
+                f"Мероприятие: {safe(_order_event_title(order, event))}",
+                *(["Источник: свободный запрос"] if event is None else []),
                 *(
-                    [f"Тип спорта: {safe(sport_type_label(event.sport_type))}"]
-                    if event.event_type == DEFAULT_EVENT_TYPE
+                    [f"Город мероприятия: {safe(_order_city(order, event))}"]
+                    if event is not None or _order_city(order, event)
+                    else []
+                ),
+                f"Тип события: {safe(event_type_label(event_type))}",
+                *(
+                    [f"Тип спорта: {safe(sport_type_label(sport_type))}"]
+                    if event_type == DEFAULT_EVENT_TYPE
                     else []
                 ),
                 f"Количество: {order.quantity}",

@@ -4,9 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.keyboards.inline import event_cities_keyboard
+from app.keyboards.inline import event_types_keyboard
 from app.keyboards.reply import contact_keyboard, main_menu_keyboard
-from app.services.events import list_event_cities
+from app.services.events import EVENT_TYPE_LABELS
 from app.services.users import create_or_update_user
 from app.states.purchase import PurchaseStates
 
@@ -48,17 +48,13 @@ async def handle_contact(message: Message, session: AsyncSession, state: FSMCont
     )
 
     await state.clear()
-    cities = await list_event_cities(session)
-    if not cities:
-        await message.answer(
-            "Регистрация завершена. Сейчас нет доступных мероприятий.",
-            reply_markup=main_menu_keyboard(),
-        )
-        return
-
-    await state.set_state(PurchaseStates.choosing_city)
-    await state.update_data(cities=cities)
+    event_types = list(EVENT_TYPE_LABELS.keys())
+    await state.set_state(PurchaseStates.choosing_event_type)
+    await state.update_data(event_types=event_types, event_type=None, sport_type=None)
     await message.answer(
-        "Регистрация завершена. Выберите город проведения:",
-        reply_markup=event_cities_keyboard(cities),
+        "Регистрация завершена. Выберите тип события.\n"
+        "Можно выбрать «Все», если тип не важен.\n\n"
+        "Если нужного мероприятия нет в списке, дальше можно будет написать его вручную "
+        "или связаться с менеджером.",
+        reply_markup=event_types_keyboard(event_types),
     )
